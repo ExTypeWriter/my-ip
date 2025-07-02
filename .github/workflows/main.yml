@@ -1,0 +1,12 @@
+name: Render Keep Alive
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping my web service
+        run: curl -s "https://my-ip-api-service.onrender.com" > /dev/null
