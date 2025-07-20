@@ -89,7 +89,7 @@ app.post('/api/ip-info/batch', async (req, res) => {
 
 /**
  * @route   POST /api/format-report
- * @desc    Formats raw incident text
+ * @desc    Formats raw incident text for TheHive.
  * @access  Public
  */
 app.post('/api/format-report', (req, res) => {
@@ -105,7 +105,8 @@ app.post('/api/format-report', (req, res) => {
         
         const categoryLineMatch = rawText.match(/^.*Category\s*:(.*)$/m);
         const subCategoriesLineMatch = rawText.match(/^.*Sub Categor(?:y|ies)\s*:(.*)$/m);
-        const deviceActionLineMatch = raw.match(/^.*Device Action\s*:(.*)$/m);
+        // FIX: Changed 'raw' to 'rawText' to match the defined variable
+        const deviceActionLineMatch = rawText.match(/^.*Device Action\s*:(.*)$/m);
 
         let categoryValue, subCategoriesValue, deviceActionValue;
 
