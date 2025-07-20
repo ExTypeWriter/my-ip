@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -86,6 +85,79 @@ app.post('/api/ip-info/batch', async (req, res) => {
     console.error('Error fetching batch data from ip-api:', error.message);
     res.status(500).json({ message: 'An error occurred on the server.' });
   }
+});
+
+/**
+ * @route   POST /api/format-report
+ * @desc    Formats raw incident text
+ * @access  Public
+ */
+app.post('/api/format-report', (req, res) => {
+    const { rawText } = req.body;
+
+    if (!rawText || typeof rawText !== 'string') {
+        return res.status(400).json({ message: 'Request body must contain a "rawText" string.' });
+    }
+
+    try {
+        let formattedString = "";
+        const genericPattern = /(.*?)(?:\s+[A-Za-z ]+\s*:|$)/;
+        
+        const categoryLineMatch = rawText.match(/^.*Category\s*:(.*)$/m);
+        const subCategoriesLineMatch = rawText.match(/^.*Sub Categor(?:y|ies)\s*:(.*)$/m);
+        const deviceActionLineMatch = raw.match(/^.*Device Action\s*:(.*)$/m);
+
+        let categoryValue, subCategoriesValue, deviceActionValue;
+
+        if (categoryLineMatch) {
+            const match = categoryLineMatch[1].match(genericPattern);
+            if (match) categoryValue = match[1].trim();
+        }
+        if (subCategoriesLineMatch) {
+            const match = subCategoriesLineMatch[1].match(genericPattern);
+            if (match) subCategoriesValue = match[1].trim();
+        }
+        if (deviceActionLineMatch) {
+            const match = deviceActionLineMatch[1].match(genericPattern);
+            if (match) deviceActionValue = match[1].trim();
+        }
+
+        if (categoryValue || subCategoriesValue || deviceActionValue) {
+            formattedString += "    Incident General Information\n";
+            if (categoryValue) {
+                formattedString += `Category : ${categoryValue}\n`;
+            }
+            if (subCategoriesValue) {
+                formattedString += `Sub Categories : ${subCategoriesValue}\n`;
+            }
+            if (deviceActionValue) {
+                formattedString += `Device Action : ${deviceActionValue}\n`;
+            }
+        }
+
+        const incidentInfoMatch = rawText.match(/Incident Information\s*([\s\S]*?)\s*(?:Event Time|Action & Recommendation|$)/);
+        if (incidentInfoMatch && incidentInfoMatch[1].trim()) {
+            const descriptionContent = incidentInfoMatch[1].replace(/Incident Detail:/, "").trim();
+            if (descriptionContent) {
+                formattedString += "\n    Incident Information\n";
+                const description = descriptionContent;
+                formattedString += `${description}\n`;
+            }
+        }
+
+        const actionRecommendationMatch = rawText.match(/Action & Recommendation\s*([\s\S]*)/);
+        if (actionRecommendationMatch && actionRecommendationMatch[1].trim()) {
+            formattedString += "\n    Action & Recommendation\n";
+            const recommendations = actionRecommendationMatch[1].trim().replace(/\n\s*\n/g, "\n");
+            formattedString += `${recommendations}\n`;
+        }
+
+        res.status(200).json({ formattedText: formattedString });
+
+    } catch (error) {
+        console.error('Error formatting report:', error);
+        res.status(500).json({ message: 'An error occurred on the server while formatting the report.' });
+    }
 });
 
 
