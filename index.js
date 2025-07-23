@@ -100,67 +100,58 @@ app.post('/api/format-report', (req, res) => {
     }
 
     try {
-        let formattedString = "";
-        const genericPattern = /(.*?)(?:\s+[A-Za-z ]+\s*:|$)/;
+        const cutoffRegex = /\n\s*(Graph|Additional detail)/i;
+        const cutoffMatch = rawText.match(cutoffRegex);
         
-        const categoryLineMatch = rawText.match(/^.*Category\s*:(.*)$/m);
-        const subCategoriesLineMatch = rawText.match(/^.*Sub Categor(?:y|ies)\s*:(.*)$/m);
-        // FIX: Changed 'raw' to 'rawText' to match the defined variable
-        const deviceActionLineMatch = rawText.match(/^.*Device Action\s*:(.*)$/m);
+        const textToParse = cutoffMatch ? rawText.substring(0, cutoffMatch.index) : rawText;
 
-        let categoryValue, subCategoriesValue, deviceActionValue;
+        const extractSection = (regex) => {
+            const lineMatch = textToParse.match(regex);
+            if (!lineMatch || !lineMatch[1]) return null;
 
-        if (categoryLineMatch) {
-            const match = categoryLineMatch[1].match(genericPattern);
-            if (match) categoryValue = match[1].trim();
-        }
-        if (subCategoriesLineMatch) {
-            const match = subCategoriesLineMatch[1].match(genericPattern);
-            if (match) subCategoriesValue = match[1].trim();
-        }
-        if (deviceActionLineMatch) {
-            const match = deviceActionLineMatch[1].match(genericPattern);
-            if (match) deviceActionValue = match[1].trim();
-        }
+            const genericPattern = /(.*?)(?:\s+[A-Za-z ]+\s*:|$)/;
+            const valueMatch = lineMatch[1].match(genericPattern);
+            
+            return valueMatch && valueMatch[1] ? valueMatch[1].trim() : null;
+        };
+        
+        // Use the helper to extract general info
+        const categoryValue = extractSection(/^.*Category\s*:(.*)$/m);
+        const subCategoriesValue = extractSection(/^.*Sub Categor(?:y|ies)\s*:(.*)$/m);
+        const deviceActionValue = extractSection(/^.*Device Action\s*:(.*)$/m);
+
+        let formattedString = "";
 
         if (categoryValue || subCategoriesValue || deviceActionValue) {
-            formattedString += "    Incident General Information\n";
-            if (categoryValue) {
-                formattedString += `Category : ${categoryValue}\n`;
-            }
-            if (subCategoriesValue) {
-                formattedString += `Sub Categories : ${subCategoriesValue}\n`;
-            }
-            if (deviceActionValue) {
-                formattedString += `Device Action : ${deviceActionValue}\n`;
-            }
+            formattedString += "   Incident General Information\n";
+            if (categoryValue) formattedString += `Category : ${categoryValue}\n`;
+            if (subCategoriesValue) formattedString += `Sub Categories : ${subCategoriesValue}\n`;
+            if (deviceActionValue) formattedString += `Device Action : ${deviceActionValue}\n`;
         }
 
-        const incidentInfoMatch = rawText.match(/Incident Information\s*([\s\S]*?)\s*(?:Event Time|Action & Recommendation|$)/);
+        const incidentInfoMatch = textToParse.match(/Incident Information\s*([\s\S]*?)\s*(?:Event Time|Action & Recommendation|$)/);
         if (incidentInfoMatch && incidentInfoMatch[1].trim()) {
             const descriptionContent = incidentInfoMatch[1].replace(/Incident Detail:/, "").trim();
             if (descriptionContent) {
-                formattedString += "\n    Incident Information\n";
-                const description = descriptionContent;
-                formattedString += `${description}\n`;
+                formattedString += "\n   Incident Information\n";
+                formattedString += `${descriptionContent}\n`;
             }
         }
 
-        const actionRecommendationMatch = rawText.match(/Action & Recommendation\s*([\s\S]*)/);
+        const actionRecommendationMatch = textToParse.match(/Action & Recommendation\s*([\s\S]*)/);
         if (actionRecommendationMatch && actionRecommendationMatch[1].trim()) {
-            formattedString += "\n    Action & Recommendation\n";
+            formattedString += "\n   Action & Recommendation\n";
             const recommendations = actionRecommendationMatch[1].trim().replace(/\n\s*\n/g, "\n");
             formattedString += `${recommendations}\n`;
         }
 
-        res.status(200).json({ formattedText: formattedString });
+        res.status(200).json({ formattedText: formattedString.trim() });
 
     } catch (error) {
         console.error('Error formatting report:', error);
         res.status(500).json({ message: 'An error occurred on the server while formatting the report.' });
     }
 });
-
 
 app.get('/', (req, res) => {
   res.send('IP Info API Backend (v2 - Patched) is running!');
