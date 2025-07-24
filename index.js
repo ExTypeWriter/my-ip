@@ -121,7 +121,7 @@ app.post('/api/format-report', (req, res) => {
         let formattedString = "";
 
         if (categoryValue || subCategoriesValue || deviceActionValue) {
-            formattedString += "   Incident General Information\n";
+            formattedString += "    Incident General Information\n";
             if (categoryValue) formattedString += `Category : ${categoryValue}\n`;
             if (subCategoriesValue) formattedString += `Sub Categories : ${subCategoriesValue}\n`;
             if (deviceActionValue) formattedString += `Device Action : ${deviceActionValue}\n`;
@@ -131,14 +131,14 @@ app.post('/api/format-report', (req, res) => {
         if (incidentInfoMatch && incidentInfoMatch[1].trim()) {
             const descriptionContent = incidentInfoMatch[1].replace(/Incident Detail:/, "").trim();
             if (descriptionContent) {
-                formattedString += "\n   Incident Information\n";
+                formattedString += "\n    Incident Information\n";
                 formattedString += `${descriptionContent}\n`;
             }
         }
 
         const actionRecommendationMatch = textToParse.match(/Action & Recommendation\s*([\s\S]*)/);
         if (actionRecommendationMatch && actionRecommendationMatch[1].trim()) {
-            formattedString += "\n   Action & Recommendation\n";
+            formattedString += "\n    Action & Recommendation\n";
             const recommendations = actionRecommendationMatch[1].trim().replace(/\n\s*\n/g, "\n");
             formattedString += `${recommendations}\n`;
         }
