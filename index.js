@@ -89,230 +89,66 @@ app.post('/api/ip-info/batch', async (req, res) => {
 
 /**
  * @route   POST /api/format-report
- * @desc    Formats raw incident text for TheHive with configurable field extraction.
+ * @desc    Formats raw incident text for TheHive.
  * @access  Public
  */
-
-// Configuration object for field extraction
-const FIELD_CONFIG = {
-    'category': {
-        keywords: ['Category','Categories'],
-        section: 'general',
-        outputLabel: 'Category'
-    },
-    'subCategories': {
-        keywords: ['Sub Categories', 'Sub Category', 'Sub Categor'],
-        section: 'general',
-        outputLabel: 'Sub Categories'
-    },
-    'deviceAction': {
-        keywords: ['Device Action'],
-        section: 'general',
-        outputLabel: 'Device Action'
-    },
-    'severity': {
-        keywords: ['Severity'],
-        section: 'general',
-        outputLabel: 'Severity'
-    },
-    'dateOfIssue': {
-        keywords: ['Date of Issue'],
-        section: 'general',
-        outputLabel: 'Date of Issue'
-    },
-    'startTime': {
-        keywords: ['Start Time'],
-        section: 'general',
-        outputLabel: 'Start Time'
-    },
-    'endTime': {
-        keywords: ['End Time'],
-        section: 'general',
-        outputLabel: 'End Time'
-    },
-    'destinationPort': {
-        keywords: ['Destination Port'],
-        section: 'general',
-        outputLabel: 'Destination Port'
-    }
-};
-
-/**
- * Extracts field value from text using multiple strategies
- */
-function extractFieldValue(text, fieldConfig) {
-    const { keywords } = fieldConfig;
-    
-    for (const keyword of keywords) {
-        const directPattern = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*\\s*([^\\n*]+)`, 'i');
-        let match = text.match(directPattern);
-        if (match && match[1].trim()) {
-            return match[1].trim();
-        }
-        
-        const keywordPattern = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*\\s*\\n?\\s*([^\\n*]+)`, 'i');
-        match = text.match(keywordPattern);
-        if (match && match[1].trim()) {
-            return match[1].trim();
-        }
-        
-        const simplePattern = new RegExp(`${keyword}\\s*:\\s*([^\\n]+)`, 'i');
-        match = text.match(simplePattern);
-        if (match && match[1].trim()) {
-            return match[1].trim();
-        }
-        
-        const multiLinePattern = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*\\s*\\n([\\s\\S]*?)(?=\\*\\*[^*]+:\\*\\*|$)`, 'i');
-        match = text.match(multiLinePattern);
-        if (match && match[1].trim()) {
-            return match[1].trim().replace(/\n\s*\n/g, '\n');
-        }
-    }
-    
-    return null;
-}
-
-/**
- * Extracts incident information section
- */
-function extractIncidentInformation(text) {
-    const patterns = [
-        /\*\*Incident Information\*\*\s*([\s\S]*?)\s*(?:\*\*Event Time\*\*|\*\*Action & Recommendation\*\*|$)/,
-        /Incident Information\s*([\s\S]*?)\s*(?:Event Time|Action & Recommendation|$)/
-    ];
-    
-    for (const pattern of patterns) {
-        const match = text.match(pattern);
-        if (match && match[1].trim()) {
-            let content = match[1].replace(/\*\*Incident Detail[^*]*\*\*/, "").trim();
-            content = content.replace(/Incident Detail:/, "").trim();
-            if (content) {
-                return content;
-            }
-        }
-    }
-    
-    return null;
-}
-
-/**
- * Extracts action and recommendation section
- */
-function extractActionRecommendation(text) {
-    const patterns = [
-        /\*\*Action & Recommendation\*\*\s*([\s\S]*)/,
-        /Action & Recommendation\s*([\s\S]*)/
-    ];
-    
-    for (const pattern of patterns) {
-        const match = text.match(pattern);
-        if (match && match[1].trim()) {
-            return match[1].trim().replace(/\n\s*\n/g, "\n");
-        }
-    }
-    
-    return null;
-}
-
 app.post('/api/format-report', (req, res) => {
-    const { rawText, customFields } = req.body;
+    const { rawText } = req.body;
 
     if (!rawText || typeof rawText !== 'string') {
         return res.status(400).json({ message: 'Request body must contain a "rawText" string.' });
     }
 
     try {
+        const cutoffRegex = /\n\s*(Graph|Additional detail)/i;
+        const cutoffMatch = rawText.match(cutoffRegex);
+        const textToParse = cutoffMatch ? rawText.substring(0, cutoffMatch.index) : rawText;
+
+        const extractSection = (regex) => {
+            const lineMatch = textToParse.match(regex);
+            if (!lineMatch || !lineMatch[1]) return null;
+
+            const genericPattern = /(.*?)(?:\s+[A-Za-z ]+\s*:|$)/;
+            const valueMatch = lineMatch[1].match(genericPattern);
+            
+            return valueMatch && valueMatch[1] ? valueMatch[1].trim() : null;
+        };
+        
+        const categoryValue = extractSection(/^.*Category\s*:(.*)$/m);
+        const subCategoriesValue = extractSection(/^.*Sub Categor(?:y|ies)\s*:(.*)$/m);
+        const deviceActionValue = extractSection(/^.*Device Action\s*:(.*)$/m);
+
         let formattedString = "";
-        
-        const fieldConfig = customFields ? { ...FIELD_CONFIG, ...customFields } : FIELD_CONFIG;
-        
-        const extractedFields = {};
-        let hasGeneralInfo = false;
-        
-        for (const [fieldKey, config] of Object.entries(fieldConfig)) {
-            if (config.section === 'general') {
-                const value = extractFieldValue(rawText, config);
-                if (value) {
-                    extractedFields[fieldKey] = {
-                        label: config.outputLabel,
-                        value: value
-                    };
-                    hasGeneralInfo = true;
-                }
-            }
-        }
-        
-        // Format general information section
-        if (hasGeneralInfo) {
+
+        if (categoryValue || subCategoriesValue || deviceActionValue) {
             formattedString += "    Incident General Information\n";
-            
-            // Define the order of fields for consistent output
-            const fieldOrder = ['category', 'subCategories', 'deviceAction', 'severity', 'dateOfIssue', 'startTime', 'endTime', 'destinationPort'];
-            
-            for (const fieldKey of fieldOrder) {
-                if (extractedFields[fieldKey]) {
-                    formattedString += `${extractedFields[fieldKey].label} : ${extractedFields[fieldKey].value}\n`;
-                }
-            }
-            
-            // Add any custom fields not in the standard order
-            for (const [fieldKey, field] of Object.entries(extractedFields)) {
-                if (!fieldOrder.includes(fieldKey)) {
-                    formattedString += `${field.label} : ${field.value}\n`;
-                }
+            if (categoryValue) formattedString += `Category : ${categoryValue}\n`;
+            if (subCategoriesValue) formattedString += `Sub Categories : ${subCategoriesValue}\n`;
+            if (deviceActionValue) formattedString += `Device Action : ${deviceActionValue}\n`;
+        }
+
+        const incidentInfoMatch = textToParse.match(/Incident Information\s*([\s\S]*?)\s*(?:Event Time|Action & Recommendation|$)/);
+        if (incidentInfoMatch && incidentInfoMatch[1].trim()) {
+            const descriptionContent = incidentInfoMatch[1].replace(/Incident Detail:/, "").trim();
+            if (descriptionContent) {
+                formattedString += "\n    Incident Information\n";
+                formattedString += `${descriptionContent}\n`;
             }
         }
 
-        // Extract and format incident information
-        const incidentInfo = extractIncidentInformation(rawText);
-        if (incidentInfo) {
-            formattedString += "\n    Incident Information\n";
-            formattedString += `${incidentInfo}\n`;
-        }
-
-        // Extract and format action & recommendation
-        const actionRecommendation = extractActionRecommendation(rawText);
-        if (actionRecommendation) {
+        const actionRecommendationMatch = textToParse.match(/Action & Recommendation\s*([\s\S]*)/);
+        if (actionRecommendationMatch && actionRecommendationMatch[1].trim()) {
             formattedString += "\n    Action & Recommendation\n";
-            formattedString += `${actionRecommendation}\n`;
+            const recommendations = actionRecommendationMatch[1].trim().replace(/\n\s*\n/g, "\n");
+            formattedString += `${recommendations}\n`;
         }
 
-        res.status(200).json({ 
-            formattedText: formattedString,
-            extractedFields: extractedFields // For debugging/validation
-        });
+        res.status(200).json({ formattedText: formattedString.trimEnd() });
 
     } catch (error) {
         console.error('Error formatting report:', error);
         res.status(500).json({ message: 'An error occurred on the server while formatting the report.' });
     }
-});
-
-// Optional: Add endpoint to update field configuration
-app.post('/api/format-report/config', (req, res) => {
-    const { fieldConfig } = req.body;
-    
-    if (!fieldConfig || typeof fieldConfig !== 'object') {
-        return res.status(400).json({ message: 'Request body must contain a "fieldConfig" object.' });
-    }
-    
-    try {
-        // Merge new configuration with existing
-        Object.assign(FIELD_CONFIG, fieldConfig);
-        
-        res.status(200).json({ 
-            message: 'Field configuration updated successfully',
-            currentConfig: FIELD_CONFIG
-        });
-    } catch (error) {
-        console.error('Error updating field configuration:', error);
-        res.status(500).json({ message: 'An error occurred while updating the configuration.' });
-    }
-});
-
-// Optional: Get current field configuration
-app.get('/api/format-report/config', (req, res) => {
-    res.status(200).json(FIELD_CONFIG);
 });
 
 
