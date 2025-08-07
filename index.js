@@ -89,11 +89,133 @@ app.post('/api/ip-info/batch', async (req, res) => {
 
 /**
  * @route   POST /api/format-report
- * @desc    Formats raw incident text for TheHive.
+ * @desc    Formats raw incident text for TheHive with configurable field extraction.
  * @access  Public
  */
+
+// Configuration object for field extraction
+const FIELD_CONFIG = {
+    'category': {
+        keywords: ['Category','Categories'],
+        section: 'general',
+        outputLabel: 'Category'
+    },
+    'subCategories': {
+        keywords: ['Sub Categories', 'Sub Category', 'Sub Categor'],
+        section: 'general',
+        outputLabel: 'Sub Categories'
+    },
+    'deviceAction': {
+        keywords: ['Device Action'],
+        section: 'general',
+        outputLabel: 'Device Action'
+    },
+    'severity': {
+        keywords: ['Severity'],
+        section: 'general',
+        outputLabel: 'Severity'
+    },
+    'dateOfIssue': {
+        keywords: ['Date of Issue'],
+        section: 'general',
+        outputLabel: 'Date of Issue'
+    },
+    'startTime': {
+        keywords: ['Start Time'],
+        section: 'general',
+        outputLabel: 'Start Time'
+    },
+    'endTime': {
+        keywords: ['End Time'],
+        section: 'general',
+        outputLabel: 'End Time'
+    },
+    'destinationPort': {
+        keywords: ['Destination Port'],
+        section: 'general',
+        outputLabel: 'Destination Port'
+    }
+};
+
+/**
+ * Extracts field value from text using multiple strategies
+ */
+function extractFieldValue(text, fieldConfig) {
+    const { keywords } = fieldConfig;
+    
+    for (const keyword of keywords) {
+        const directPattern = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*\\s*([^\\n*]+)`, 'i');
+        let match = text.match(directPattern);
+        if (match && match[1].trim()) {
+            return match[1].trim();
+        }
+        
+        const keywordPattern = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*\\s*\\n?\\s*([^\\n*]+)`, 'i');
+        match = text.match(keywordPattern);
+        if (match && match[1].trim()) {
+            return match[1].trim();
+        }
+        
+        const simplePattern = new RegExp(`${keyword}\\s*:\\s*([^\\n]+)`, 'i');
+        match = text.match(simplePattern);
+        if (match && match[1].trim()) {
+            return match[1].trim();
+        }
+        
+        const multiLinePattern = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*\\s*\\n([\\s\\S]*?)(?=\\*\\*[^*]+:\\*\\*|$)`, 'i');
+        match = text.match(multiLinePattern);
+        if (match && match[1].trim()) {
+            return match[1].trim().replace(/\n\s*\n/g, '\n');
+        }
+    }
+    
+    return null;
+}
+
+/**
+ * Extracts incident information section
+ */
+function extractIncidentInformation(text) {
+    const patterns = [
+        /\*\*Incident Information\*\*\s*([\s\S]*?)\s*(?:\*\*Event Time\*\*|\*\*Action & Recommendation\*\*|$)/,
+        /Incident Information\s*([\s\S]*?)\s*(?:Event Time|Action & Recommendation|$)/
+    ];
+    
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match && match[1].trim()) {
+            let content = match[1].replace(/\*\*Incident Detail[^*]*\*\*/, "").trim();
+            content = content.replace(/Incident Detail:/, "").trim();
+            if (content) {
+                return content;
+            }
+        }
+    }
+    
+    return null;
+}
+
+/**
+ * Extracts action and recommendation section
+ */
+function extractActionRecommendation(text) {
+    const patterns = [
+        /\*\*Action & Recommendation\*\*\s*([\s\S]*)/,
+        /Action & Recommendation\s*([\s\S]*)/
+    ];
+    
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match && match[1].trim()) {
+            return match[1].trim().replace(/\n\s*\n/g, "\n");
+        }
+    }
+    
+    return null;
+}
+
 app.post('/api/format-report', (req, res) => {
-    const { rawText } = req.body;
+    const { rawText, customFields } = req.body;
 
     if (!rawText || typeof rawText !== 'string') {
         return res.status(400).json({ message: 'Request body must contain a "rawText" string.' });
@@ -101,64 +223,96 @@ app.post('/api/format-report', (req, res) => {
 
     try {
         let formattedString = "";
-        const genericPattern = /(.*?)(?:\s+[A-Za-z ]+\s*:|$)/;
         
-        const categoryLineMatch = rawText.match(/^.*Category\s*:(.*)$/m);
-        const subCategoriesLineMatch = rawText.match(/^.*Sub Categor(?:y|ies)\s*:(.*)$/m);
-        // FIX: Changed 'raw' to 'rawText' to match the defined variable
-        const deviceActionLineMatch = rawText.match(/^.*Device Action\s*:(.*)$/m);
-
-        let categoryValue, subCategoriesValue, deviceActionValue;
-
-        if (categoryLineMatch) {
-            const match = categoryLineMatch[1].match(genericPattern);
-            if (match) categoryValue = match[1].trim();
+        const fieldConfig = customFields ? { ...FIELD_CONFIG, ...customFields } : FIELD_CONFIG;
+        
+        const extractedFields = {};
+        let hasGeneralInfo = false;
+        
+        for (const [fieldKey, config] of Object.entries(fieldConfig)) {
+            if (config.section === 'general') {
+                const value = extractFieldValue(rawText, config);
+                if (value) {
+                    extractedFields[fieldKey] = {
+                        label: config.outputLabel,
+                        value: value
+                    };
+                    hasGeneralInfo = true;
+                }
+            }
         }
-        if (subCategoriesLineMatch) {
-            const match = subCategoriesLineMatch[1].match(genericPattern);
-            if (match) subCategoriesValue = match[1].trim();
-        }
-        if (deviceActionLineMatch) {
-            const match = deviceActionLineMatch[1].match(genericPattern);
-            if (match) deviceActionValue = match[1].trim();
-        }
-
-        if (categoryValue || subCategoriesValue || deviceActionValue) {
+        
+        // Format general information section
+        if (hasGeneralInfo) {
             formattedString += "    Incident General Information\n";
-            if (categoryValue) {
-                formattedString += `Category : ${categoryValue}\n`;
+            
+            // Define the order of fields for consistent output
+            const fieldOrder = ['category', 'subCategories', 'deviceAction', 'severity', 'dateOfIssue', 'startTime', 'endTime', 'destinationPort'];
+            
+            for (const fieldKey of fieldOrder) {
+                if (extractedFields[fieldKey]) {
+                    formattedString += `${extractedFields[fieldKey].label} : ${extractedFields[fieldKey].value}\n`;
+                }
             }
-            if (subCategoriesValue) {
-                formattedString += `Sub Categories : ${subCategoriesValue}\n`;
-            }
-            if (deviceActionValue) {
-                formattedString += `Device Action : ${deviceActionValue}\n`;
-            }
-        }
-
-        const incidentInfoMatch = rawText.match(/Incident Information\s*([\s\S]*?)\s*(?:Event Time|Action & Recommendation|$)/);
-        if (incidentInfoMatch && incidentInfoMatch[1].trim()) {
-            const descriptionContent = incidentInfoMatch[1].replace(/Incident Detail:/, "").trim();
-            if (descriptionContent) {
-                formattedString += "\n    Incident Information\n";
-                const description = descriptionContent;
-                formattedString += `${description}\n`;
+            
+            // Add any custom fields not in the standard order
+            for (const [fieldKey, field] of Object.entries(extractedFields)) {
+                if (!fieldOrder.includes(fieldKey)) {
+                    formattedString += `${field.label} : ${field.value}\n`;
+                }
             }
         }
 
-        const actionRecommendationMatch = rawText.match(/Action & Recommendation\s*([\s\S]*)/);
-        if (actionRecommendationMatch && actionRecommendationMatch[1].trim()) {
+        // Extract and format incident information
+        const incidentInfo = extractIncidentInformation(rawText);
+        if (incidentInfo) {
+            formattedString += "\n    Incident Information\n";
+            formattedString += `${incidentInfo}\n`;
+        }
+
+        // Extract and format action & recommendation
+        const actionRecommendation = extractActionRecommendation(rawText);
+        if (actionRecommendation) {
             formattedString += "\n    Action & Recommendation\n";
-            const recommendations = actionRecommendationMatch[1].trim().replace(/\n\s*\n/g, "\n");
-            formattedString += `${recommendations}\n`;
+            formattedString += `${actionRecommendation}\n`;
         }
 
-        res.status(200).json({ formattedText: formattedString });
+        res.status(200).json({ 
+            formattedText: formattedString,
+            extractedFields: extractedFields // For debugging/validation
+        });
 
     } catch (error) {
         console.error('Error formatting report:', error);
         res.status(500).json({ message: 'An error occurred on the server while formatting the report.' });
     }
+});
+
+// Optional: Add endpoint to update field configuration
+app.post('/api/format-report/config', (req, res) => {
+    const { fieldConfig } = req.body;
+    
+    if (!fieldConfig || typeof fieldConfig !== 'object') {
+        return res.status(400).json({ message: 'Request body must contain a "fieldConfig" object.' });
+    }
+    
+    try {
+        // Merge new configuration with existing
+        Object.assign(FIELD_CONFIG, fieldConfig);
+        
+        res.status(200).json({ 
+            message: 'Field configuration updated successfully',
+            currentConfig: FIELD_CONFIG
+        });
+    } catch (error) {
+        console.error('Error updating field configuration:', error);
+        res.status(500).json({ message: 'An error occurred while updating the configuration.' });
+    }
+});
+
+// Optional: Get current field configuration
+app.get('/api/format-report/config', (req, res) => {
+    res.status(200).json(FIELD_CONFIG);
 });
 
 
