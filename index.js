@@ -81,24 +81,72 @@ app.post('/api/ip-info/batch', async (req, res) => {
   }
 });
 
-// Configuration object for field extraction
+// Configuration object for field extraction with filtering support
 let FIELD_CONFIG = {
     // General Information fields
     'category': {
         keywords: ['Category'],
         section: 'general',
-        outputLabel: 'Category'
+        outputLabel: 'Category',
+        enabled: true,
+        priority: 1
     },
     'subCategories': {
         keywords: ['Sub Categories', 'Sub Category', 'Sub Categor'],
         section: 'general',
-        outputLabel: 'Sub Categories'
+        outputLabel: 'Sub Categories',
+        enabled: true,
+        priority: 2
     },
     'deviceAction': {
         keywords: ['Device Action'],
         section: 'general',
-        outputLabel: 'Device Action'
+        outputLabel: 'Device Action',
+        enabled: true,
+        priority: 3
+    },
+    'severity': {
+        keywords: ['Severity'],
+        section: 'general',
+        outputLabel: 'Severity',
+        enabled: false,
+        priority: 4
+    },
+    'dateOfIssue': {
+        keywords: ['Date of Issue'],
+        section: 'general',
+        outputLabel: 'Date of Issue',
+        enabled: false,
+        priority: 5
+    },
+    'startTime': {
+        keywords: ['Start Time'],
+        section: 'general',
+        outputLabel: 'Start Time',
+        enabled: false,
+        priority: 6
+    },
+    'endTime': {
+        keywords: ['End Time'],
+        section: 'general',
+        outputLabel: 'End Time',
+        enabled: false,
+        priority: 7
+    },
+    'destinationPort': {
+        keywords: ['Destination Port'],
+        section: 'general',
+        outputLabel: 'Destination Port',
+        enabled: false,
+        priority: 8
     }
+};
+
+// Section configuration
+let SECTION_CONFIG = {
+    general: { enabled: true, label: 'Incident General Information' },
+    incidentInfo: { enabled: true, label: 'Incident Information' },
+    actionRecommendation: { enabled: true, label: 'Action & Recommendation' }
 };
 
 /**
@@ -144,7 +192,6 @@ function extractFieldValue(text, fieldConfig) {
  * Extracts incident information section
  */
 function extractIncidentInformation(text) {
-    // Look for "Incident Information" section
     const patterns = [
         /\*\*Incident Information\*\*\s*([\s\S]*?)\s*(?:\*\*Event Time\*\*|\*\*Action & Recommendation\*\*|$)/,
         /Incident Information\s*([\s\S]*?)\s*(?:Event Time|Action & Recommendation|$)/
@@ -184,12 +231,67 @@ function extractActionRecommendation(text) {
 }
 
 /**
+ * Applies filtering to extracted fields based on configuration
+ */
+function applyFieldFilters(extractedFields, filters) {
+    const { enabled, disabled, maxFields, includeOnly } = filters;
+    
+    let filteredFields = { ...extractedFields };
+    
+    // Apply enabled filter (whitelist)
+    if (enabled && Array.isArray(enabled)) {
+        const enabledSet = new Set(enabled);
+        filteredFields = Object.fromEntries(
+            Object.entries(filteredFields).filter(([key]) => enabledSet.has(key))
+        );
+    }
+    
+    // Apply disabled filter (blacklist)
+    if (disabled && Array.isArray(disabled)) {
+        const disabledSet = new Set(disabled);
+        filteredFields = Object.fromEntries(
+            Object.entries(filteredFields).filter(([key]) => !disabledSet.has(key))
+        );
+    }
+    
+    // Apply includeOnly filter (keyword matching)
+    if (includeOnly && Array.isArray(includeOnly)) {
+        filteredFields = Object.fromEntries(
+            Object.entries(filteredFields).filter(([key, field]) => 
+                includeOnly.some(keyword => 
+                    field.label.toLowerCase().includes(keyword.toLowerCase()) ||
+                    field.value.toLowerCase().includes(keyword.toLowerCase())
+                )
+            )
+        );
+    }
+    
+    // Apply maxFields filter (priority-based)
+    if (maxFields && typeof maxFields === 'number') {
+        const sortedEntries = Object.entries(filteredFields)
+            .map(([key, field]) => ({
+                key,
+                field,
+                priority: FIELD_CONFIG[key]?.priority || 999
+            }))
+            .sort((a, b) => a.priority - b.priority)
+            .slice(0, maxFields);
+        
+        filteredFields = Object.fromEntries(
+            sortedEntries.map(({ key, field }) => [key, field])
+        );
+    }
+    
+    return filteredFields;
+}
+
+/**
  * @route   POST /api/format-report
- * @desc    Formats raw incident text for TheHive with configurable field extraction.
+ * @desc    Formats raw incident text for TheHive with configurable field extraction and filtering.
  * @access  Public
  */
 app.post('/api/format-report', (req, res) => {
-    const { rawText, customFields } = req.body;
+    const { rawText, customFields, fieldFilters = {}, sections = {} } = req.body;
 
     if (!rawText || typeof rawText !== 'string') {
         return res.status(400).json({ message: 'Request body must contain a "rawText" string.' });
@@ -203,13 +305,14 @@ app.post('/api/format-report', (req, res) => {
         let formattedString = "";
         
         const fieldConfig = customFields ? { ...FIELD_CONFIG, ...customFields } : FIELD_CONFIG;
+        const sectionConfig = { ...SECTION_CONFIG, ...sections };
         
         // Extract general information fields
-        const extractedFields = {};
+        let extractedFields = {};
         let hasGeneralInfo = false;
         
         for (const [fieldKey, config] of Object.entries(fieldConfig)) {
-            if (config.section === 'general') {
+            if (config.section === 'general' && config.enabled !== false) {
                 const value = extractFieldValue(textToParse, config);
                 if (value) {
                     extractedFields[fieldKey] = {
@@ -221,9 +324,13 @@ app.post('/api/format-report', (req, res) => {
             }
         }
         
+        // Apply field filters
+        extractedFields = applyFieldFilters(extractedFields, fieldFilters);
+        hasGeneralInfo = Object.keys(extractedFields).length > 0;
+        
         // Format general information section
-        if (hasGeneralInfo) {
-            formattedString += "    Incident General Information\n";
+        if (hasGeneralInfo && sectionConfig.general?.enabled !== false) {
+            formattedString += `    ${sectionConfig.general?.label || 'Incident General Information'}\n`;
             
             const fieldOrder = ['category', 'subCategories', 'deviceAction', 'severity', 'dateOfIssue', 'startTime', 'endTime', 'destinationPort'];
             
@@ -241,22 +348,28 @@ app.post('/api/format-report', (req, res) => {
         }
 
         // Extract and format incident information
-        const incidentInfo = extractIncidentInformation(textToParse);
-        if (incidentInfo) {
-            formattedString += "\n    Incident Information\n";
-            formattedString += `${incidentInfo}\n`;
+        if (sectionConfig.incidentInfo?.enabled !== false) {
+            const incidentInfo = extractIncidentInformation(textToParse);
+            if (incidentInfo) {
+                formattedString += `\n    ${sectionConfig.incidentInfo?.label || 'Incident Information'}\n`;
+                formattedString += `${incidentInfo}\n`;
+            }
         }
 
         // Extract and format action & recommendation
-        const actionRecommendation = extractActionRecommendation(textToParse);
-        if (actionRecommendation) {
-            formattedString += "\n    Action & Recommendation\n";
-            formattedString += `${actionRecommendation}\n`;
+        if (sectionConfig.actionRecommendation?.enabled !== false) {
+            const actionRecommendation = extractActionRecommendation(textToParse);
+            if (actionRecommendation) {
+                formattedString += `\n    ${sectionConfig.actionRecommendation?.label || 'Action & Recommendation'}\n`;
+                formattedString += `${actionRecommendation}\n`;
+            }
         }
 
         res.status(200).json({ 
             formattedText: formattedString.trimEnd(),
-            extractedFields: extractedFields // For debugging/validation
+            extractedFields: extractedFields,
+            appliedFilters: fieldFilters,
+            sectionsIncluded: Object.keys(sectionConfig).filter(key => sectionConfig[key]?.enabled !== false)
         });
 
     } catch (error) {
@@ -267,41 +380,50 @@ app.post('/api/format-report', (req, res) => {
 
 /**
  * @route   POST /api/format-report/config
- * @desc    Update field configuration for report formatting
+ * @desc    Update field and section configuration for report formatting
  * @access  Public
  */
 app.post('/api/format-report/config', (req, res) => {
-    const { fieldConfig } = req.body;
+    const { fieldConfig, sectionConfig } = req.body;
     
-    if (!fieldConfig || typeof fieldConfig !== 'object') {
-        return res.status(400).json({ message: 'Request body must contain a "fieldConfig" object.' });
+    if (!fieldConfig && !sectionConfig) {
+        return res.status(400).json({ message: 'Request body must contain "fieldConfig" and/or "sectionConfig" object.' });
     }
     
     try {
-        // Merge new configuration with existing
-        Object.assign(FIELD_CONFIG, fieldConfig);
+        if (fieldConfig && typeof fieldConfig === 'object') {
+            Object.assign(FIELD_CONFIG, fieldConfig);
+        }
+        
+        if (sectionConfig && typeof sectionConfig === 'object') {
+            Object.assign(SECTION_CONFIG, sectionConfig);
+        }
         
         res.status(200).json({ 
-            message: 'Field configuration updated successfully',
-            currentConfig: FIELD_CONFIG
+            message: 'Configuration updated successfully',
+            currentFieldConfig: FIELD_CONFIG,
+            currentSectionConfig: SECTION_CONFIG
         });
     } catch (error) {
-        console.error('Error updating field configuration:', error);
+        console.error('Error updating configuration:', error);
         res.status(500).json({ message: 'An error occurred while updating the configuration.' });
     }
 });
 
 /**
  * @route   GET /api/format-report/config
- * @desc    Get current field configuration
+ * @desc    Get current field and section configuration
  * @access  Public
  */
 app.get('/api/format-report/config', (req, res) => {
-    res.status(200).json(FIELD_CONFIG);
+    res.status(200).json({
+        fieldConfig: FIELD_CONFIG,
+        sectionConfig: SECTION_CONFIG
+    });
 });
 
 app.get('/', (req, res) => {
-  res.send('IP Info API Backend (v3 - Enhanced Format Report) is running!');
+  res.send('IP Info API Backend (v4 - With Filtering) is running!');
 });
 
 app.listen(PORT, () => {
