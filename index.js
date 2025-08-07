@@ -98,31 +98,6 @@ let FIELD_CONFIG = {
         keywords: ['Device Action'],
         section: 'general',
         outputLabel: 'Device Action'
-    },
-    'severity': {
-        keywords: ['Severity'],
-        section: 'general',
-        outputLabel: 'Severity'
-    },
-    'dateOfIssue': {
-        keywords: ['Date of Issue'],
-        section: 'general',
-        outputLabel: 'Date of Issue'
-    },
-    'startTime': {
-        keywords: ['Start Time'],
-        section: 'general',
-        outputLabel: 'Start Time'
-    },
-    'endTime': {
-        keywords: ['End Time'],
-        section: 'general',
-        outputLabel: 'End Time'
-    },
-    'destinationPort': {
-        keywords: ['Destination Port'],
-        section: 'general',
-        outputLabel: 'Destination Port'
     }
 };
 
