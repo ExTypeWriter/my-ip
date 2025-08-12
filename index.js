@@ -81,7 +81,6 @@ app.post('/api/ip-info/batch', async (req, res) => {
   }
 });
 
-// Configuration object for field extraction with filtering support
 let FIELD_CONFIG = {
     // General Information fields
     'category': {
@@ -156,12 +155,24 @@ function extractFieldValue(text, fieldConfig) {
     const { keywords } = fieldConfig;
     
     for (const keyword of keywords) {
-        const boldPattern = new RegExp(`\\*\\*${keyword}\\s*:\\s*\\*\\*\\s*([^\\n*]+)`, 'i');
-        let match = text.match(boldPattern);
+        const sameLineNoClosing = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*?\\s*([^\\n*]+)`, 'i');
+        let match = text.match(sameLineNoClosing);
         if (match && match[1].trim()) {
             return match[1].trim();
         }
         
+        const nextLineNoClosing = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*?\\s*\\n\\s*([^\\n*]+)`, 'i');
+        match = text.match(nextLineNoClosing);
+        if (match && match[1].trim()) {
+            return match[1].trim();
+        }
+        
+        const boldPattern = new RegExp(`\\*\\*${keyword}\\s*:\\s*\\*\\*\\s*([^\\n*]+)`, 'i');
+        match = text.match(boldPattern);
+        if (match && match[1].trim()) {
+            return match[1].trim();
+        }
+
         const nextLinePattern = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*\\s*\\n\\s*([^\\n*]+)`, 'i');
         match = text.match(nextLinePattern);
         if (match && match[1].trim()) {
@@ -178,7 +189,7 @@ function extractFieldValue(text, fieldConfig) {
             }
         }
         
-        const multiLinePattern = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*\\s*\\n([\\s\\S]*?)(?=\\*\\*[^*]+:\\*\\*|$)`, 'i');
+        const multiLinePattern = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*?\\s*\\n([\\s\\S]*?)(?=\\*\\*[^*]+:\\*\\*?|$)`, 'i');
         match = text.match(multiLinePattern);
         if (match && match[1].trim()) {
             return match[1].trim().replace(/\n\s*\n/g, '\n');
@@ -187,7 +198,6 @@ function extractFieldValue(text, fieldConfig) {
     
     return null;
 }
-
 /**
  * Extracts incident information section
  */
