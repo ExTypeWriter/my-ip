@@ -151,35 +151,58 @@ let SECTION_CONFIG = {
 /**
  * Extracts field value from text using multiple strategies
  */
+/**
+ * Extracts field value from text using multiple strategies
+ */
 function extractFieldValue(text, fieldConfig) {
     const { keywords } = fieldConfig;
     
     for (const keyword of keywords) {
-        const sameLineNoClosing = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*?\\s*([^\\n*]+)`, 'i');
-        let match = text.match(sameLineNoClosing);
+        // Pattern 1: Tabular format - "Keyword :" followed by tab/spaces then value, then tab/spaces then next field
+        // Example: "Category : 	Inappropriate Usage	Sub Category:	allowed"
+        const tabularPattern = new RegExp(`${keyword}\\s*:\\s*([^\\t\\n]+?)(?=\\s*\\t[A-Za-z\\s]+\\s*:|\\s*$)`, 'i');
+        let match = text.match(tabularPattern);
         if (match && match[1].trim()) {
             return match[1].trim();
         }
         
+        // Pattern 2: **Keyword :** value (same line, no closing **)
+        const sameLineNoClosing = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*?\\s*([^\\n*]+)`, 'i');
+        match = text.match(sameLineNoClosing);
+        if (match && match[1].trim()) {
+            return match[1].trim();
+        }
+        
+        // Pattern 3: **Keyword :** \n value (next line, no closing **)
         const nextLineNoClosing = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*?\\s*\\n\\s*([^\\n*]+)`, 'i');
         match = text.match(nextLineNoClosing);
         if (match && match[1].trim()) {
             return match[1].trim();
         }
         
+        // Pattern 4: **Keyword : ** value (original bold pattern)
         const boldPattern = new RegExp(`\\*\\*${keyword}\\s*:\\s*\\*\\*\\s*([^\\n*]+)`, 'i');
         match = text.match(boldPattern);
         if (match && match[1].trim()) {
             return match[1].trim();
         }
-
+        
+        // Pattern 5: **Keyword :** ** \n value (next line with closing **)
         const nextLinePattern = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*\\s*\\n\\s*([^\\n*]+)`, 'i');
         match = text.match(nextLinePattern);
         if (match && match[1].trim()) {
             return match[1].trim();
         }
         
-        const simplePattern = new RegExp(`^.*${keyword}\\s*:(.*)$`, 'm');
+        // Pattern 6: Simple line-based pattern - "Keyword : value" on its own line
+        const simpleLinePattern = new RegExp(`^\\s*${keyword}\\s*:\\s*(.+?)\\s*$`, 'm');
+        match = text.match(simpleLinePattern);
+        if (match && match[1].trim()) {
+            return match[1].trim();
+        }
+        
+        // Pattern 7: Generic pattern for fallback
+        const simplePattern = new RegExp(`${keyword}\\s*:(.*)$`, 'm');
         match = text.match(simplePattern);
         if (match && match[1]) {
             const genericPattern = /(.*?)(?:\s+[A-Za-z ]+\s*:|$)/;
@@ -189,6 +212,7 @@ function extractFieldValue(text, fieldConfig) {
             }
         }
         
+        // Pattern 8: Multi-line pattern
         const multiLinePattern = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*?\\s*\\n([\\s\\S]*?)(?=\\*\\*[^*]+:\\*\\*?|$)`, 'i');
         match = text.match(multiLinePattern);
         if (match && match[1].trim()) {
