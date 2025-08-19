@@ -456,6 +456,51 @@ app.get('/api/format-report/config', (req, res) => {
     });
 });
 
+/**
+ * @route   GET /api/abuseipdb/:ip
+ * @desc    Look up IP in AbuseIPDB
+ * @access  Public
+ */
+app.get('/api/abuseipdb/:ip', async (req, res) => {
+    const { ip } = req.params;
+    const API_KEY = process.env.ABUSEIPDB_API_KEY;
+    
+    if (!API_KEY) {
+        return res.status(500).json({ 
+            error: 'AbuseIPDB API key not configured' 
+        });
+    }
+    
+    try {
+        const url = new URL('https://api.abuseipdb.com/api/v2/check');
+        url.searchParams.append('ipAddress', ip);
+        url.searchParams.append('maxAgeInDays', '90');
+        url.searchParams.append('verbose', '');
+        
+        const response = await fetch(url.toString(), {
+            method: 'GET',
+            headers: {
+                'Key': API_KEY,
+                'Accept': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`AbuseIPDB API responded with status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        res.json(data);
+        
+    } catch (error) {
+        console.error('AbuseIPDB lookup failed:', error);
+        res.status(500).json({ 
+            error: 'AbuseIPDB lookup failed',
+            message: error.message 
+        });
+    }
+});
+
 app.get('/', (req, res) => {
   res.send('IP Info API Backend (v4 - With Filtering) is running!');
 });
