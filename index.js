@@ -463,7 +463,7 @@ app.get('/api/format-report/config', (req, res) => {
  */
 app.get('/api/abuseipdb/:ip', async (req, res) => {
     const { ip } = req.params;
-    const API_KEY = process.env.ABUSEIPDB_API_KEY;
+    const API_KEY = process.env.ABUSEIPDB_API_KEY; 
     
     if (!API_KEY) {
         return res.status(500).json({ 
@@ -486,10 +486,15 @@ app.get('/api/abuseipdb/:ip', async (req, res) => {
         });
         
         if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`AbuseIPDB API error ${response.status}:`, errorText);
             throw new Error(`AbuseIPDB API responded with status: ${response.status}`);
         }
         
         const data = await response.json();
+        
+        console.log('AbuseIPDB API Response:', JSON.stringify(data, null, 2));
+        
         res.json(data);
         
     } catch (error) {
