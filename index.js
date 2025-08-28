@@ -84,14 +84,14 @@ app.post('/api/ip-info/batch', async (req, res) => {
 let FIELD_CONFIG = {
     // General Information fields
     'category': {
-        keywords: ['Category','Categories'],
+        keywords: ['Category'],
         section: 'general',
         outputLabel: 'Category',
         enabled: true,
         priority: 1
     },
     'subCategories': {
-        keywords: ['Sub Categories', 'Sub Category', 'Sub Categor','Sub Categories:','Sub Category:'],
+        keywords: ['Sub Categories', 'Sub Category', 'Sub Categor'],
         section: 'general',
         outputLabel: 'Sub Categories',
         enabled: true,
@@ -104,21 +104,6 @@ let FIELD_CONFIG = {
         enabled: true,
         priority: 3
     },
-    'signature': {
-        keywords: ['Signature','Signatures','Signature Alert'],
-        section: 'general',
-        outputLabel: 'Signature',
-        enabled: true,
-        priority: 3
-    },
-    'eventClassID': {
-        keywords: ['Device Event Class ID','Event Class ID'],
-        section: 'general',
-        outputLabel: 'Event Class ID',
-        enabled: true,
-        priority: 4
-    },
-    
     'severity': {
         keywords: ['Severity'],
         section: 'general',
