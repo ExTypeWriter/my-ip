@@ -84,7 +84,7 @@ app.post('/api/ip-info/batch', async (req, res) => {
 let FIELD_CONFIG = {
     // General Information fields
     'category': {
-        keywords: ['Category'],
+        keywords: ['Category','Categories'],
         section: 'general',
         outputLabel: 'Category',
         enabled: true,
