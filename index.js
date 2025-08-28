@@ -104,6 +104,13 @@ let FIELD_CONFIG = {
         enabled: true,
         priority: 3
     },
+    'signature': {
+        keywords: ['Signature','Signatures','Signature Alert'],
+        section: 'general',
+        outputLabel: 'Signature',
+        enabled: false,
+        priority: 3
+    },
     'severity': {
         keywords: ['Severity'],
         section: 'general',
