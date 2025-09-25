@@ -24,6 +24,67 @@ function getFieldsQuery(requestedFields, defaultFields) {
     return defaultFields;
 }
 
+function ipToParts(ip) {
+  return ip.split('.').map(Number);
+}
+
+function summarizeSubnets(ips) {
+  // Group by first 3 octets
+  const buckets = new Map();
+  for (const ip of ips) {
+    const [a,b,c,d] = ipToParts(ip);
+    const key = `${a}.${b}.${c}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(d);
+  }
+
+  const results = [];
+  for (const [prefix, hosts] of buckets) {
+    const min = Math.min(...hosts);
+    const max = Math.max(...hosts);
+
+    // default to Class C (/24-/32)
+    let mask = 24;
+    // try narrower masks if possible
+    for (let prefixLen = 25; prefixLen <= 32; prefixLen++) {
+      const size = 1 << (32 - prefixLen); 
+      const base = Math.floor(min / size) * size;
+      const rangeStart = base;
+      const rangeEnd = base + size - 1;
+      if (max <= rangeEnd && min >= rangeStart) {
+        mask = prefixLen;
+      } else {
+        break; 
+      }
+    }
+
+    results.push(`${prefix}.${Math.floor(min / (1 << (32-mask))) * (1 << (32-mask))}/${mask}`);
+  }
+
+  return results;
+}
+
+/**
+ * @route   POST /api/subnets/summarize
+ * @desc    Summarize a batch of IP addresses into minimal covering subnets (/24–/32).
+ * @access  Public
+ */
+app.post('/api/subnets/summarize', (req, res) => {
+  const { ips } = req.body;
+
+  if (!ips || !Array.isArray(ips) || ips.length === 0) {
+    return res.status(400).json({ message: 'Request body must contain an array of IPs.' });
+  }
+
+  try {
+    const subnets = summarizeSubnets(ips);
+    res.status(200).json({ subnets });
+  } catch (error) {
+    console.error('Error summarizing IPs:', error.message);
+    res.status(500).json({ message: 'An error occurred on the server.' });
+  }
+});
+
 /**
  * @route   GET /api/ip-info/:ip?
  * @desc    Get geolocation info for a specific IP or the requesting IP.
