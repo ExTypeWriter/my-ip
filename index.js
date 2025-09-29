@@ -219,9 +219,6 @@ let SECTION_CONFIG = {
 /**
  * Extracts field value from text using multiple strategies
  */
-/**
- * Extracts field value from text using multiple strategies
- */
 function extractFieldValue(text, fieldConfig) {
     const { keywords } = fieldConfig;
     
