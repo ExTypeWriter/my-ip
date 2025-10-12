@@ -247,6 +247,7 @@ function extractSection(text, keywords) {
     );
     const match = text.match(pattern);
     if (match?.[1]?.trim()) {
+      // Clean up content: remove "Incident Detail" labels and excessive line breaks
       let content = match[1].trim();
       content = content.replace(/\*\*Incident Detail[^*]*\*\*/, '').trim();
       content = content.replace(/Incident Detail:/, '').trim();
