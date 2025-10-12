@@ -5,6 +5,10 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// ============================================================================
+// MIDDLEWARE
+// ============================================================================
+
 app.use(cors());
 app.use(express.json());
 
@@ -13,16 +17,86 @@ app.use((req, res, next) => {
   next();
 });
 
-function getFieldsQuery(requestedFields, defaultFields) {
-    if (requestedFields) {
-        const fieldSet = new Set(requestedFields.split(','));
-        fieldSet.add('status');
-        fieldSet.add('message');
-        fieldSet.add('query');
-        return Array.from(fieldSet).join(',');
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+let FIELD_CONFIG = {
+    // General Information fields
+    'category': {
+        keywords: ['Category','Categories'],
+        section: 'general',
+        outputLabel: 'Category',
+        enabled: true,
+        priority: 1
+    },
+    'subCategories': {
+        keywords: ['Sub Categories', 'Sub Category', 'Sub Categor'],
+        section: 'general',
+        outputLabel: 'Sub Categories',
+        enabled: true,
+        priority: 2
+    },
+    'deviceAction': {
+        keywords: ['Device Action'],
+        section: 'general',
+        outputLabel: 'Device Action',
+        enabled: true,
+        priority: 3
+    },
+    'signature': {
+        keywords: ['Signature','Signatures','Signature Alert'],
+        section: 'general',
+        outputLabel: 'Signature',
+        enabled: false,
+        priority: 3
+    },
+    'severity': {
+        keywords: ['Severity'],
+        section: 'general',
+        outputLabel: 'Severity',
+        enabled: false,
+        priority: 4
+    },
+    'dateOfIssue': {
+        keywords: ['Date of Issue'],
+        section: 'general',
+        outputLabel: 'Date of Issue',
+        enabled: false,
+        priority: 5
+    },
+    'startTime': {
+        keywords: ['Start Time'],
+        section: 'general',
+        outputLabel: 'Start Time',
+        enabled: false,
+        priority: 6
+    },
+    'endTime': {
+        keywords: ['End Time'],
+        section: 'general',
+        outputLabel: 'End Time',
+        enabled: false,
+        priority: 7
+    },
+    'destinationPort': {
+        keywords: ['Destination Port'],
+        section: 'general',
+        outputLabel: 'Destination Port',
+        enabled: false,
+        priority: 8
     }
-    return defaultFields;
-}
+};
+
+let SECTION_CONFIG = {
+    general: { enabled: true, label: 'Incident General Information' },
+    incidentInfo: { enabled: true, label: 'Incident Information' },
+    actionRecommendation: { enabled: true, label: 'Action & Recommendation' }
+};
+
+// ============================================================================
+// UTILITY FUNCTIONS - IP OPERATIONS
+// ============================================================================
 
 function ipToParts(ip) {
   return ip.split('.').map(Number);
@@ -64,26 +138,193 @@ function summarizeSubnets(ips) {
   return results;
 }
 
+function getFieldsQuery(requestedFields, defaultFields) {
+    if (requestedFields) {
+        const fieldSet = new Set(requestedFields.split(','));
+        fieldSet.add('status');
+        fieldSet.add('message');
+        fieldSet.add('query');
+        return Array.from(fieldSet).join(',');
+    }
+    return defaultFields;
+}
+
+// ============================================================================
+// UTILITY FUNCTIONS - REPORT FORMATTING
+// ============================================================================
+
 /**
- * @route   POST /api/subnets/summarize
- * @desc    Summarize a batch of IP addresses into minimal covering subnets (/24–/32).
- * @access  Public
+ * Extracts field value from text using multiple strategies
  */
-app.post('/api/subnets/summarize', (req, res) => {
-  const { ips } = req.body;
+function extractFieldValue(text, fieldConfig) {
+    const { keywords } = fieldConfig;
+    
+    for (const keyword of keywords) {
+        // Pattern 1: Tabular format - "Keyword :" followed by tab/spaces then value, then tab/spaces then next field
+        // Example: "Category : 	Inappropriate Usage	Sub Category:	allowed"
+        const tabularPattern = new RegExp(`${keyword}\\s*:\\s*([^\\t\\n]+?)(?=\\s*\\t[A-Za-z\\s]+\\s*:|\\s*$)`, 'i');
+        let match = text.match(tabularPattern);
+        if (match && match[1].trim()) {
+            return match[1].trim();
+        }
+        
+        // Pattern 2: **Keyword :** value (same line, no closing **)
+        const sameLineNoClosing = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*?\\s*([^\\n*]+)`, 'i');
+        match = text.match(sameLineNoClosing);
+        if (match && match[1].trim()) {
+            return match[1].trim();
+        }
+        
+        // Pattern 3: **Keyword :** \n value (next line, no closing **)
+        const nextLineNoClosing = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*?\\s*\\n\\s*([^\\n*]+)`, 'i');
+        match = text.match(nextLineNoClosing);
+        if (match && match[1].trim()) {
+            return match[1].trim();
+        }
+        
+        // Pattern 4: **Keyword : ** value (original bold pattern)
+        const boldPattern = new RegExp(`\\*\\*${keyword}\\s*:\\s*\\*\\*\\s*([^\\n*]+)`, 'i');
+        match = text.match(boldPattern);
+        if (match && match[1].trim()) {
+            return match[1].trim();
+        }
+        
+        // Pattern 5: **Keyword :** ** \n value (next line with closing **)
+        const nextLinePattern = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*\\s*\\n\\s*([^\\n*]+)`, 'i');
+        match = text.match(nextLinePattern);
+        if (match && match[1].trim()) {
+            return match[1].trim();
+        }
+        
+        // Pattern 6: Simple line-based pattern - "Keyword : value" on its own line
+        const simpleLinePattern = new RegExp(`^\\s*${keyword}\\s*:\\s*(.+?)\\s*$`, 'm');
+        match = text.match(simpleLinePattern);
+        if (match && match[1].trim()) {
+            return match[1].trim();
+        }
+        
+        // Pattern 7: Generic pattern for fallback
+        const simplePattern = new RegExp(`${keyword}\\s*:(.*)$`, 'm');
+        match = text.match(simplePattern);
+        if (match && match[1]) {
+            const genericPattern = /(.*?)(?:\s+[A-Za-z ]+\s*:|$)/;
+            const valueMatch = match[1].match(genericPattern);
+            if (valueMatch && valueMatch[1]) {
+                return valueMatch[1].trim();
+            }
+        }
+        
+        // Pattern 8: Multi-line pattern
+        const multiLinePattern = new RegExp(`\\*\\*${keyword}\\s*:\\*\\*?\\s*\\n([\\s\\S]*?)(?=\\*\\*[^*]+:\\*\\*?|$)`, 'i');
+        match = text.match(multiLinePattern);
+        if (match && match[1].trim()) {
+            return match[1].trim().replace(/\n\s*\n/g, '\n');
+        }
+    }
+    
+    return null;
+}
 
-  if (!ips || !Array.isArray(ips) || ips.length === 0) {
-    return res.status(400).json({ message: 'Request body must contain an array of IPs.' });
-  }
+/**
+ * Extracts incident information section
+ */
+function extractIncidentInformation(text) {
+    const patterns = [
+        /\*\*Incident Information\*\*\s*([\s\S]*?)\s*(?:\*\*Event Time\*\*|\*\*Action & Recommendation\*\*|$)/,
+        /Incident Information\s*([\s\S]*?)\s*(?:Event Time|Action & Recommendation|$)/
+    ];
+    
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match && match[1].trim()) {
+            let content = match[1].replace(/\*\*Incident Detail[^*]*\*\*/, "").trim();
+            content = content.replace(/Incident Detail:/, "").trim();
+            if (content) {
+                return content;
+            }
+        }
+    }
+    
+    return null;
+}
 
-  try {
-    const subnets = summarizeSubnets(ips);
-    res.status(200).json({ subnets });
-  } catch (error) {
-    console.error('Error summarizing IPs:', error.message);
-    res.status(500).json({ message: 'An error occurred on the server.' });
-  }
-});
+/**
+ * Extracts action and recommendation section
+ */
+function extractActionRecommendation(text) {
+    const patterns = [
+        /\*\*Action & Recommendation\*\*\s*([\s\S]*)/,
+        /Action & Recommendation\s*([\s\S]*)/
+    ];
+    
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match && match[1].trim()) {
+            return match[1].trim().replace(/\n\s*\n/g, "\n");
+        }
+    }
+    
+    return null;
+}
+
+/**
+ * Applies filtering to extracted fields based on configuration
+ */
+function applyFieldFilters(extractedFields, filters) {
+    const { enabled, disabled, maxFields, includeOnly } = filters;
+    
+    let filteredFields = { ...extractedFields };
+    
+    // Apply enabled filter (whitelist)
+    if (enabled && Array.isArray(enabled)) {
+        const enabledSet = new Set(enabled);
+        filteredFields = Object.fromEntries(
+            Object.entries(filteredFields).filter(([key]) => enabledSet.has(key))
+        );
+    }
+    
+    // Apply disabled filter (blacklist)
+    if (disabled && Array.isArray(disabled)) {
+        const disabledSet = new Set(disabled);
+        filteredFields = Object.fromEntries(
+            Object.entries(filteredFields).filter(([key]) => !disabledSet.has(key))
+        );
+    }
+    
+    // Apply includeOnly filter (keyword matching)
+    if (includeOnly && Array.isArray(includeOnly)) {
+        filteredFields = Object.fromEntries(
+            Object.entries(filteredFields).filter(([key, field]) => 
+                includeOnly.some(keyword => 
+                    field.label.toLowerCase().includes(keyword.toLowerCase()) ||
+                    field.value.toLowerCase().includes(keyword.toLowerCase())
+                )
+            )
+        );
+    }
+    
+    // Apply maxFields filter (priority-based)
+    if (maxFields && typeof maxFields === 'number') {
+        const sortedEntries = Object.entries(filteredFields)
+            .map(([key, field]) => ({
+                key,
+                field,
+                priority: FIELD_CONFIG[key]?.priority || 999
+            }))
+            .sort((a, b) => a.priority - b.priority)
+            .slice(0, maxFields);
+        
+        filteredFields = Object.fromEntries(
+            sortedEntries.map(({ key, field }) => [key, field])
+        );
+    }
+    
+    return filteredFields;
+}
+
+// ============================================================================
+// ROUTES - IP INFORMATION
+// ============================================================================
 
 /**
  * @route   GET /api/ip-info/:ip?
@@ -142,274 +383,6 @@ app.post('/api/ip-info/batch', async (req, res) => {
   }
 });
 
-let REPORT_CONFIG = {
-  fields: {
-    category: { 
-      keywords: ['Category', 'Categories'], 
-      label: 'Category', 
-      priority: 1,
-      enabled: true 
-    },
-    subCategories: { 
-      keywords: ['Sub Categories', 'Sub Category', 'Sub Categor'], 
-      label: 'Sub Categories', 
-      priority: 2,
-      enabled: true 
-    },
-    deviceAction: { 
-      keywords: ['Device Action'], 
-      label: 'Device Action', 
-      priority: 3,
-      enabled: true 
-    },
-    signature: {
-      keywords: ['Signature', 'Signatures', 'Signature Alert'],
-      label: 'Signature',
-      priority: 4,
-      enabled: false
-    },
-    severity: { 
-      keywords: ['Severity'], 
-      label: 'Severity', 
-      priority: 5,
-      enabled: false 
-    },
-    dateOfIssue: {
-      keywords: ['Date of Issue'],
-      label: 'Date of Issue',
-      priority: 6,
-      enabled: false
-    },
-    startTime: {
-      keywords: ['Start Time'],
-      label: 'Start Time',
-      priority: 7,
-      enabled: false
-    },
-    endTime: {
-      keywords: ['End Time'],
-      label: 'End Time',
-      priority: 8,
-      enabled: false
-    },
-    destinationPort: {
-      keywords: ['Destination Port'],
-      label: 'Destination Port',
-      priority: 9,
-      enabled: false
-    }
-  },
-  sections: {
-    general: { 
-      label: 'Incident General Information', 
-      enabled: true 
-    },
-    incident: { 
-      label: 'Incident Information', 
-      keywords: ['Incident Information'], 
-      enabled: true 
-    },
-    action: { 
-      label: 'Action & Recommendation', 
-      keywords: ['Action & Recommendation', 'Action and Recommendation'], 
-      enabled: true 
-    }
-  }
-};
-
-/**
- * Extracts field value from text using optimized regex patterns
- */
-function extractValue(text, keywords) {
-  for (const keyword of keywords) {
-    const patterns = [
-      `${keyword}\\s*:\\s*([^\\t\\n]+?)(?=\\t|$)`,           // Tabular format
-      `\\*\\*${keyword}\\s*:\\*\\*?\\s*([^\\n*]+)`,          // Bold markdown
-      `${keyword}\\s*:\\s*(.+?)(?=\\n[A-Z]|$)`               // Simple format
-    ];
-    
-    for (const pattern of patterns) {
-      const match = text.match(new RegExp(pattern, 'im'));
-      if (match?.[1]?.trim()) return match[1].trim();
-    }
-  }
-  return null;
-}
-
-/**
- * Extracts section content and handles duplicates properly
- */
-function extractSection(text, keywords, stopBeforeKeywords = []) {
-  for (const keyword of keywords) {
-    // Build a more precise pattern that stops at known section headers
-    const stopPatterns = [
-      'Event Time\\s+Source Address',  // Table header
-      'Graph',
-      'Additional detail',
-      ...stopBeforeKeywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    ].join('|');
-    
-    // Match section header (with or without asterisks/indentation)
-    const pattern = new RegExp(
-      `^\\s*\\*?\\*?${keyword}\\*?\\*?\\s*$\\s*([\\s\\S]*?)(?=^\\s*(?:${stopPatterns})|$)`,
-      'im'
-    );
-    
-    const match = text.match(pattern);
-    if (match?.[1]?.trim()) {
-      let content = match[1].trim();
-      
-      // Clean up "Incident Detail" labels
-      content = content.replace(/\*\*Incident Detail[^*]*\*\*/, '').trim();
-      content = content.replace(/^Incident Detail[:\s]*/, '').trim();
-      
-      // Remove excessive line breaks but preserve single breaks
-      content = content.replace(/\n{3,}/g, '\n\n');
-      
-      return content;
-    }
-  }
-  return null;
-}
-
-/**
- * Finds all occurrences of a section and returns only the first one
- */
-function extractFirstOccurrence(text, keywords) {
-  let firstMatch = null;
-  let firstIndex = Infinity;
-  
-  for (const keyword of keywords) {
-    const pattern = new RegExp(`^\\s*\\*?\\*?${keyword}\\*?\\*?\\s*$`, 'im');
-    const match = text.match(pattern);
-    if (match && match.index < firstIndex) {
-      firstIndex = match.index;
-      // Extract content starting from first occurrence
-      const startPos = match.index;
-      firstMatch = text.substring(startPos);
-    }
-  }
-  
-  return firstMatch;
-}
-
-/**
- * @route   POST /api/format-report
- * @desc    Formats raw incident text for TheHive with simplified extraction
- * @access  Public
- */
-app.post('/api/format-report', (req, res) => {
-  const { rawText, customFields, sections } = req.body;
-
-  if (!rawText || typeof rawText !== 'string') {
-    return res.status(400).json({ message: 'Request body must contain a "rawText" string.' });
-  }
-
-  try {
-    // Remove everything after "Graph" or "Additional detail"
-    let cleanText = rawText.split(/\n\s*(Graph|Additional detail)/i)[0];
-    
-    // Merge custom configurations with defaults
-    const fieldConfig = customFields ? { ...REPORT_CONFIG.fields, ...customFields } : REPORT_CONFIG.fields;
-    const sectionConfig = sections ? { ...REPORT_CONFIG.sections, ...sections } : REPORT_CONFIG.sections;
-    
-    let output = '';
-    const extracted = {};
-
-    // GENERAL INFORMATION SECTION
-    if (sectionConfig.general?.enabled !== false) {
-      const fields = Object.entries(fieldConfig)
-        .filter(([_, config]) => config.enabled !== false)
-        .map(([key, config]) => ({
-          key,
-          ...config,
-          value: extractValue(cleanText, config.keywords)
-        }))
-        .filter(f => f.value)
-        .sort((a, b) => a.priority - b.priority);
-
-      if (fields.length > 0) {
-        output += `    ${sectionConfig.general.label}\n`;
-        fields.forEach(f => {
-          output += `${f.label} : ${f.value}\n`;
-          extracted[f.key] = { label: f.label, value: f.value };
-        });
-      }
-    }
-
-    // INCIDENT INFORMATION SECTION
-    if (sectionConfig.incident?.enabled !== false) {
-      const incidentSection = extractFirstOccurrence(cleanText, sectionConfig.incident.keywords);
-      if (incidentSection) {
-        const content = extractSection(incidentSection, sectionConfig.incident.keywords, sectionConfig.action.keywords);
-        if (content) {
-          output += `\n    ${sectionConfig.incident.label}\n${content}\n`;
-        }
-      }
-    }
-
-    // ACTION & RECOMMENDATION SECTION
-    if (sectionConfig.action?.enabled !== false) {
-      const actionSection = extractFirstOccurrence(cleanText, sectionConfig.action.keywords);
-      if (actionSection) {
-        const content = extractSection(actionSection, sectionConfig.action.keywords);
-        if (content) {
-          output += `\n    ${sectionConfig.action.label}\n${content}\n`;
-        }
-      }
-    }
-
-    res.status(200).json({ 
-      formattedText: output.trimEnd(),
-      extractedFields: extracted
-    });
-
-  } catch (error) {
-    console.error('Error formatting report:', error);
-    res.status(500).json({ message: 'An error occurred on the server while formatting the report.' });
-  }
-});
-
-/**
- * @route   GET /api/format-report/config
- * @desc    Get current report formatting configuration
- * @access  Public
- */
-app.get('/api/format-report/config', (req, res) => {
-  res.status(200).json(REPORT_CONFIG);
-});
-
-/**
- * @route   POST /api/format-report/config
- * @desc    Update report formatting configuration
- * @access  Public
- */
-app.post('/api/format-report/config', (req, res) => {
-  const { fields, sections } = req.body;
-  
-  if (!fields && !sections) {
-    return res.status(400).json({ message: 'Request body must contain "fields" and/or "sections" object.' });
-  }
-  
-  try {
-    if (fields && typeof fields === 'object') {
-      Object.assign(REPORT_CONFIG.fields, fields);
-    }
-    
-    if (sections && typeof sections === 'object') {
-      Object.assign(REPORT_CONFIG.sections, sections);
-    }
-    
-    res.status(200).json({ 
-      message: 'Configuration updated successfully',
-      config: REPORT_CONFIG
-    });
-  } catch (error) {
-    console.error('Error updating configuration:', error);
-    res.status(500).json({ message: 'An error occurred while updating the configuration.' });
-  }
-});
-
 /**
  * @route   GET /api/abuseipdb/:ip
  * @desc    Look up IP in AbuseIPDB
@@ -460,8 +433,178 @@ app.get('/api/abuseipdb/:ip', async (req, res) => {
     }
 });
 
+// ============================================================================
+// ROUTES - SUBNET OPERATIONS
+// ============================================================================
+
+/**
+ * @route   POST /api/subnets/summarize
+ * @desc    Summarize a batch of IP addresses into minimal covering subnets (/24–/32).
+ * @access  Public
+ */
+app.post('/api/subnets/summarize', (req, res) => {
+  const { ips } = req.body;
+
+  if (!ips || !Array.isArray(ips) || ips.length === 0) {
+    return res.status(400).json({ message: 'Request body must contain an array of IPs.' });
+  }
+
+  try {
+    const subnets = summarizeSubnets(ips);
+    res.status(200).json({ subnets });
+  } catch (error) {
+    console.error('Error summarizing IPs:', error.message);
+    res.status(500).json({ message: 'An error occurred on the server.' });
+  }
+});
+
+// ============================================================================
+// ROUTES - REPORT FORMATTING
+// ============================================================================
+
+/**
+ * @route   POST /api/format-report
+ * @desc    Formats raw incident text for TheHive with configurable field extraction and filtering.
+ * @access  Public
+ */
+app.post('/api/format-report', (req, res) => {
+    const { rawText, customFields, fieldFilters = {}, sections = {} } = req.body;
+
+    if (!rawText || typeof rawText !== 'string') {
+        return res.status(400).json({ message: 'Request body must contain a "rawText" string.' });
+    }
+
+    try {
+        const cutoffRegex = /\n\s*(Graph|Additional detail)/i;
+        const cutoffMatch = rawText.match(cutoffRegex);
+        const textToParse = cutoffMatch ? rawText.substring(0, cutoffMatch.index) : rawText;
+
+        let formattedString = "";
+        
+        const fieldConfig = customFields ? { ...FIELD_CONFIG, ...customFields } : FIELD_CONFIG;
+        const sectionConfig = { ...SECTION_CONFIG, ...sections };
+        
+        // Extract general information fields
+        let extractedFields = {};
+        let hasGeneralInfo = false;
+        
+        for (const [fieldKey, config] of Object.entries(fieldConfig)) {
+            if (config.section === 'general' && config.enabled !== false) {
+                const value = extractFieldValue(textToParse, config);
+                if (value) {
+                    extractedFields[fieldKey] = {
+                        label: config.outputLabel,
+                        value: value
+                    };
+                    hasGeneralInfo = true;
+                }
+            }
+        }
+        
+        // Apply field filters
+        extractedFields = applyFieldFilters(extractedFields, fieldFilters);
+        hasGeneralInfo = Object.keys(extractedFields).length > 0;
+        
+        // Format general information section
+        if (hasGeneralInfo && sectionConfig.general?.enabled !== false) {
+            formattedString += `    ${sectionConfig.general?.label || 'Incident General Information'}\n`;
+            
+            const fieldOrder = ['category', 'subCategories', 'deviceAction', 'severity', 'dateOfIssue', 'startTime', 'endTime', 'destinationPort'];
+            
+            for (const fieldKey of fieldOrder) {
+                if (extractedFields[fieldKey]) {
+                    formattedString += `${extractedFields[fieldKey].label} : ${extractedFields[fieldKey].value}\n`;
+                }
+            }
+            
+            for (const [fieldKey, field] of Object.entries(extractedFields)) {
+                if (!fieldOrder.includes(fieldKey)) {
+                    formattedString += `${field.label} : ${field.value}\n`;
+                }
+            }
+        }
+
+        // Extract and format incident information
+        if (sectionConfig.incidentInfo?.enabled !== false) {
+            const incidentInfo = extractIncidentInformation(textToParse);
+            if (incidentInfo) {
+                formattedString += `\n    ${sectionConfig.incidentInfo?.label || 'Incident Information'}\n`;
+                formattedString += `${incidentInfo}\n`;
+            }
+        }
+
+        // Extract and format action & recommendation
+        if (sectionConfig.actionRecommendation?.enabled !== false) {
+            const actionRecommendation = extractActionRecommendation(textToParse);
+            if (actionRecommendation) {
+                formattedString += `\n    ${sectionConfig.actionRecommendation?.label || 'Action & Recommendation'}\n`;
+                formattedString += `${actionRecommendation}\n`;
+            }
+        }
+
+        res.status(200).json({ 
+            formattedText: formattedString.trimEnd(),
+            extractedFields: extractedFields,
+            appliedFilters: fieldFilters,
+            sectionsIncluded: Object.keys(sectionConfig).filter(key => sectionConfig[key]?.enabled !== false)
+        });
+
+    } catch (error) {
+        console.error('Error formatting report:', error);
+        res.status(500).json({ message: 'An error occurred on the server while formatting the report.' });
+    }
+});
+
+/**
+ * @route   GET /api/format-report/config
+ * @desc    Get current field and section configuration
+ * @access  Public
+ */
+app.get('/api/format-report/config', (req, res) => {
+    res.status(200).json({
+        fieldConfig: FIELD_CONFIG,
+        sectionConfig: SECTION_CONFIG
+    });
+});
+
+/**
+ * @route   POST /api/format-report/config
+ * @desc    Update field and section configuration for report formatting
+ * @access  Public
+ */
+app.post('/api/format-report/config', (req, res) => {
+    const { fieldConfig, sectionConfig } = req.body;
+    
+    if (!fieldConfig && !sectionConfig) {
+        return res.status(400).json({ message: 'Request body must contain "fieldConfig" and/or "sectionConfig" object.' });
+    }
+    
+    try {
+        if (fieldConfig && typeof fieldConfig === 'object') {
+            Object.assign(FIELD_CONFIG, fieldConfig);
+        }
+        
+        if (sectionConfig && typeof sectionConfig === 'object') {
+            Object.assign(SECTION_CONFIG, sectionConfig);
+        }
+        
+        res.status(200).json({ 
+            message: 'Configuration updated successfully',
+            currentFieldConfig: FIELD_CONFIG,
+            currentSectionConfig: SECTION_CONFIG
+        });
+    } catch (error) {
+        console.error('Error updating configuration:', error);
+        res.status(500).json({ message: 'An error occurred while updating the configuration.' });
+    }
+});
+
+// ============================================================================
+// ROUTES
+// ============================================================================
+
 app.get('/', (req, res) => {
-  res.send('IP Info API Backend (v5 - Simplified Report Formatter) is running!');
+  res.send('IP Info API Backend (v4 - With Filtering) is running!');
 });
 
 app.listen(PORT, () => {
