@@ -237,25 +237,60 @@ function extractValue(text, keywords) {
 }
 
 /**
- * Extracts section content
+ * Extracts section content and handles duplicates properly
  */
-function extractSection(text, keywords) {
+function extractSection(text, keywords, stopBeforeKeywords = []) {
   for (const keyword of keywords) {
+    // Build a more precise pattern that stops at known section headers
+    const stopPatterns = [
+      'Event Time\\s+Source Address',  // Table header
+      'Graph',
+      'Additional detail',
+      ...stopBeforeKeywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    ].join('|');
+    
+    // Match section header (with or without asterisks/indentation)
     const pattern = new RegExp(
-      `\\*?\\*?${keyword}\\*?\\*?\\s*\\n([\\s\\S]*?)(?=\\n\\s*\\*\\*[A-Z]|$)`, 
-      'i'
+      `^\\s*\\*?\\*?${keyword}\\*?\\*?\\s*$\\s*([\\s\\S]*?)(?=^\\s*(?:${stopPatterns})|$)`,
+      'im'
     );
+    
     const match = text.match(pattern);
     if (match?.[1]?.trim()) {
-      // Clean up content: remove "Incident Detail" labels and excessive line breaks
       let content = match[1].trim();
+      
+      // Clean up "Incident Detail" labels
       content = content.replace(/\*\*Incident Detail[^*]*\*\*/, '').trim();
-      content = content.replace(/Incident Detail:/, '').trim();
+      content = content.replace(/^Incident Detail[:\s]*/, '').trim();
+      
+      // Remove excessive line breaks but preserve single breaks
       content = content.replace(/\n{3,}/g, '\n\n');
+      
       return content;
     }
   }
   return null;
+}
+
+/**
+ * Finds all occurrences of a section and returns only the first one
+ */
+function extractFirstOccurrence(text, keywords) {
+  let firstMatch = null;
+  let firstIndex = Infinity;
+  
+  for (const keyword of keywords) {
+    const pattern = new RegExp(`^\\s*\\*?\\*?${keyword}\\*?\\*?\\s*$`, 'im');
+    const match = text.match(pattern);
+    if (match && match.index < firstIndex) {
+      firstIndex = match.index;
+      // Extract content starting from first occurrence
+      const startPos = match.index;
+      firstMatch = text.substring(startPos);
+    }
+  }
+  
+  return firstMatch;
 }
 
 /**
@@ -272,7 +307,7 @@ app.post('/api/format-report', (req, res) => {
 
   try {
     // Remove everything after "Graph" or "Additional detail"
-    const cleanText = rawText.split(/\n\s*(Graph|Additional detail)/i)[0];
+    let cleanText = rawText.split(/\n\s*(Graph|Additional detail)/i)[0];
     
     // Merge custom configurations with defaults
     const fieldConfig = customFields ? { ...REPORT_CONFIG.fields, ...customFields } : REPORT_CONFIG.fields;
@@ -304,17 +339,23 @@ app.post('/api/format-report', (req, res) => {
 
     // INCIDENT INFORMATION SECTION
     if (sectionConfig.incident?.enabled !== false) {
-      const content = extractSection(cleanText, sectionConfig.incident.keywords);
-      if (content) {
-        output += `\n    ${sectionConfig.incident.label}\n${content}\n`;
+      const incidentSection = extractFirstOccurrence(cleanText, sectionConfig.incident.keywords);
+      if (incidentSection) {
+        const content = extractSection(incidentSection, sectionConfig.incident.keywords, sectionConfig.action.keywords);
+        if (content) {
+          output += `\n    ${sectionConfig.incident.label}\n${content}\n`;
+        }
       }
     }
 
     // ACTION & RECOMMENDATION SECTION
     if (sectionConfig.action?.enabled !== false) {
-      const content = extractSection(cleanText, sectionConfig.action.keywords);
-      if (content) {
-        output += `\n    ${sectionConfig.action.label}\n${content}\n`;
+      const actionSection = extractFirstOccurrence(cleanText, sectionConfig.action.keywords);
+      if (actionSection) {
+        const content = extractSection(actionSection, sectionConfig.action.keywords);
+        if (content) {
+          output += `\n    ${sectionConfig.action.label}\n${content}\n`;
+        }
       }
     }
 
