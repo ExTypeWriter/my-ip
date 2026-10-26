@@ -3,4 +3,4 @@ This is the backend of https://myip-tools.web.app/ project, which was developed 
 1. IP Geolocation : For identify source IP's geolocation
 2. IP reputation checker (data refer from AbuseIPDB) : To check a reputation of input IP address.
 3. Subnet Summarization : For summarizing the subnet of the ip address from log pasted in text format
-4. Incident report formatter (depreciated) : To transform incident report into a description for case management.
+~~4. Incident report formatter~~ — removed (was deprecated). `/api/format-report` and `/api/format-report/config` no longer exist.
